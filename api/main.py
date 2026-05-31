@@ -4,6 +4,8 @@ from groq import Groq
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 import joblib
 import numpy as np
 
@@ -49,8 +51,8 @@ class ExplainInput(BaseModel):
     region: str = Field(...)
 
 class ExplainOutput(BaseModel):
-    explication: str = Field(...)
-    modele_llm: str = Field(default="llama-3.1-8b-instant")
+    explication: str = Field(..., description="Explication en francais")
+    modele_llm: str = Field(default="llama-3.1-8b-instant", description="Modele LLM utilise")
 
 app = FastAPI(
     title="SenSante API",
@@ -58,38 +60,30 @@ app = FastAPI(
     version="0.3.0"
 )
 
-SYSTEM_PROMPT = """Yow dafa neex na ci kàddu bu wolof.
-Nga jëf ci xam-xam yi ci yëf yu dëkk yi ci Senegaal.
-Nga jëfandikoo wolof bu yees ak bu xolu.
-Waxtaan ak patient bi ni daktari bi dafa wax ak xarit.
-Yëgël ko ci loxo bu jàmm, waaye di ko wax na dem dispensaire.
-3 jumtukaay rekk.
-Bul def diagnostic yow - yëgël rekk diagnostic bi."""
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+SYSTEM_PROMPT = """Tu es un assistant medical senegalais.
+Explique le diagnostic en francais simple avec quelques mots wolof :
+Commence par 'Sama xarit' (Mon ami)
+Dis 'dafa doy' si c'est pas grave
+Termine toujours par 'Dem ci daktari bi' (Va chez le medecin)
+Maximum 3 phrases.
+Ne fais JAMAIS de diagnostic toi-meme."""
 
 @app.get("/health")
-def health_check():
-    return {"status": "ok", "message": "SenSante API is running"}
+def health():
+    return {"status": "ok"}
 
 @app.post("/predict", response_model=DiagnosticOutput)
 def predict(patient: PatientInput):
-    try:
-        sexe_enc = le_sexe.transform([patient.sexe])[0]
-    except ValueError:
-        return DiagnosticOutput(
-            diagnostic="erreur",
-            probabilite=0.0,
-            confiance="aucune",
-            message=f"Sexe invalide : {patient.sexe}"
-        )
-    try:
-        region_enc = le_region.transform([patient.region])[0]
-    except ValueError:
-        return DiagnosticOutput(
-            diagnostic="erreur",
-            probabilite=0.0,
-            confiance="aucune",
-            message=f"Region inconnue : {patient.region}"
-        )
+    sexe_enc = le_sexe.transform([patient.sexe])[0]
+    region_enc = le_region.transform([patient.region])[0]
     features = np.array([[
         patient.age,
         sexe_enc,
@@ -100,25 +94,19 @@ def predict(patient: PatientInput):
         int(patient.maux_tete),
         region_enc
     ]])
-    diagnostic = model.predict(features)[0]
-    proba_max = float(model.predict_proba(features)[0].max())
-    if proba_max >= 0.7:
+    prediction = model.predict(features)[0]
+    proba = model.predict_proba(features)[0].max()
+    if proba >= 0.75:
         confiance = "haute"
-    elif proba_max >= 0.4:
+    elif proba >= 0.50:
         confiance = "moyenne"
     else:
         confiance = "faible"
-    messages = {
-        "palu": "Suspicion de paludisme. Consultez rapidement.",
-        "grippe": "Suspicion de grippe. Repos et hydratation.",
-        "typh": "Suspicion de typhoide. Consultation necessaire.",
-        "sain": "Pas de pathologie detectee."
-    }
     return DiagnosticOutput(
-        diagnostic=diagnostic,
-        probabilite=round(proba_max, 2),
+        diagnostic=prediction,
+        probabilite=round(float(proba), 2),
         confiance=confiance,
-        message=messages.get(diagnostic, "Consultez un medecin.")
+        message=f"Diagnostic : {prediction} avec une confiance {confiance}."
     )
 
 @app.post("/explain", response_model=ExplainOutput)
@@ -131,7 +119,8 @@ def explain(data: ExplainInput):
     user_prompt = (
         f"Patient : {data.sexe}, {data.age} ans, region {data.region}\n"
         f"Temperature : {data.temperature}C\n"
-        f"Diagnostic du modele : {data.diagnostic} (probabilite {data.probabilite:.0%})\n"
+        f"Diagnostic du modele : {data.diagnostic} "
+        f"(probabilite {data.probabilite:.0%})\n"
         f"Explique ce resultat au patient."
     )
     try:
@@ -158,10 +147,8 @@ def model_info():
         "nombre_features": model.n_features_in_
     }
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+@app.get("/")
+def serve_frontend():
+    return FileResponse("frontend/index.html")
+
+app.mount("/static", StaticFiles(directory="frontend"), name="static")
