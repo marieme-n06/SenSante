@@ -12,10 +12,12 @@ import numpy as np
 load_dotenv()
 
 print("Chargement du modele...")
-model = joblib.load("models/model.pkl")
-le_sexe = joblib.load("models/encoder_sexe.pkl")
-le_region = joblib.load("models/encoder_region.pkl")
-feature_cols = joblib.load("models/feature_cols.pkl")
+import os
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+model = joblib.load(os.path.join(BASE_DIR, "model.pkl"))
+le_sexe = joblib.load(os.path.join(BASE_DIR, "encoder_sexe.pkl"))
+le_region = joblib.load(os.path.join(BASE_DIR, "encoder_region.pkl"))
+feature_cols = joblib.load(os.path.join(BASE_DIR, "feature_cols.pkl"))
 print(f"Modele charge : {list(model.classes_)}")
 
 groq_client = None
